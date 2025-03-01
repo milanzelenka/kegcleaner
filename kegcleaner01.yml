@@ -1,0 +1,593 @@
+substitutions:
+  devname: 'kegcleaner01'
+  project: 'pivovar66'
+
+globals:
+  - id: millis_send
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: millis_diff
+    type: int
+    restore_value: false
+    initial_value: '0'
+  
+esphome:
+  name: "${devname}"
+  project:
+    name: "esphome.${project}"
+    version: "1.0"
+  platform: ESP32
+  board: esp32dev
+
+#wifi:
+#   ssid: !secret wifi_ssid
+#   password: !secret wifi_pass
+
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk_mode: GPIO17_OUT
+  phy_addr: 0
+  manual_ip:
+    static_ip: 10.69.0.70
+    gateway: 10.69.0.1
+    subnet: 255.255.255.0
+    dns1: 10.69.0.1
+
+api:
+  password: !secret api_pass
+  reboot_timeout: "0s"
+ota:
+  password: !secret api_pass
+    
+logger:
+  level: DEBUG #WARN
+
+web_server:
+  port: 80
+  version: 2
+  local: true
+
+i2c:
+  sda: 4
+  scl: 5
+  scan: true
+  id: bus_a
+
+dallas:
+  - pin: 32
+    id: onewire_hub_1
+    update_interval: 10sec
+
+pcf8574:
+  - id: 'pcf8574_hub_out_1'  # for output channel 1-8
+    address: 0x24
+
+  - id: 'pcf8574_hub_out_2'  # for output channel 9-16
+    address: 0x25
+
+  - id: 'pcf8574_hub_in_1'  # for input channel 1-8
+    address: 0x22
+
+  - id: 'pcf8574_hub_in_2'  # for input channel 9-16
+    address: 0x21
+
+# Reay outputs
+switch:
+  - platform: gpio
+    name: "KegCleaner Valve Water"
+    id: "${devname}_valve_water"
+    icon: "mdi:pipe-valve"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 0
+      mode: OUTPUT
+      inverted: true
+    interlock:
+      - "${devname}_valve_return"
+
+  - platform: gpio
+    name: "KegCleaner Valve Hot Water"
+    id: "${devname}_valve_hot_water"
+    icon: "mdi:pipe-valve"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 1
+      mode: OUTPUT
+      inverted: true
+    interlock:
+      - "${devname}_valve_return"
+
+  - platform: gpio
+    name: "KegCleaner Valve Air"
+    id: "${devname}_valve_air"
+    icon: "mdi:pipe-valve"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 2
+      mode: OUTPUT
+      inverted: true
+
+  - platform: gpio
+    name: "KegCleaner Valve Reduced Air"
+    id: "${devname}_valve_reduced_air"
+    icon: "mdi:pipe-valve"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 3
+      mode: OUTPUT
+      inverted: true
+
+  - platform: gpio
+    name: "KegCleaner Valve Reduced Inert Gas"
+    id: "${devname}_valve_inert_gas"
+    icon: "mdi:pipe-valve"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 4
+      mode: OUTPUT
+      inverted: true
+
+  - platform: gpio
+    name: "KegCleaner Valve Drain"
+    id: "${devname}_valve_drain"
+    icon: "mdi:pipe-valve"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 5
+      mode: OUTPUT
+      inverted: true
+    interlock:
+      - "${devname}_valve_return"
+      - "${devname}_cleaning_solution_pump_relay"
+
+  - platform: gpio
+    name: "KegCleaner Valve Return"
+    id: "${devname}_valve_return"
+    icon: "mdi:pipe-valve"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_1
+      number: 6
+      mode: OUTPUT
+      inverted: true
+    interlock:
+      - "${devname}_valve_drain"
+      - "${devname}_valve_water"
+      - "${devname}_valve_hot_water"
+      - "${devname}_valve_inert_gas"
+
+  - platform: gpio
+    name: "KegCleaner Cleaning Solution Heating Relay"
+    id: "${devname}_cleaning_solution_heating_relay"
+    icon: "mdi:heating-coil"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_2
+      number: 0
+      mode: OUTPUT
+      inverted: true
+
+  - platform: gpio
+    name: "KegCleaner Cleaning Solution Pump Relay"
+    id: "${devname}_cleaning_solution_pump_relay"
+    icon: "mdi:pump"
+    restore_mode: ALWAYS_OFF
+    pin:
+      pcf8574: pcf8574_hub_out_2
+      number: 1
+      mode: OUTPUT
+      inverted: true
+    interlock: ["${devname}_valve_drain"]
+    on_turn_on:
+      - delay: 2s
+      - switch.turn_on: "${devname}_valve_return"
+
+### SCRIPT SWITCHES (for starting/stopping scripts by hand)
+  - platform: template
+    id: "${devname}_script_empty_control"
+    name: "KegCleaner Script - Empty"
+    lambda: 'return (id(${devname}_script_empty).is_running());'
+    turn_on_action:
+      - script.execute: "${devname}_script_empty"
+    turn_off_action:
+      - script.stop: "${devname}_script_empty"
+      - script.stop: "${devname}_script_empty_step"
+      - switch.turn_off: "${devname}_valve_air"
+      - logger.log: "Script canceled! Check the state..."
+      - delay: 1s
+  - platform: template
+    id: "${devname}_script_preclean_control"
+    name: "KegCleaner Script - Pre-clean"
+    lambda: 'return (id(${devname}_script_preclean).is_running());'
+    turn_on_action:
+      - script.execute: "${devname}_script_preclean"
+    turn_off_action:
+      - script.stop: "${devname}_script_preclean"
+      - script.stop: "${devname}_script_empty"
+      - script.stop: "${devname}_script_empty_step"
+      - switch.turn_off: "${devname}_valve_air"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - switch.turn_off: "${devname}_valve_hot_water"
+      - logger.log: "Script canceled! Check the state..."
+      - delay: 1s
+  - platform: template
+    id: "${devname}_script_clean_control"
+    name: "KegCleaner Script - Clean"
+    lambda: 'return (id(${devname}_script_clean).is_running());'
+    turn_on_action:
+      - script.execute: "${devname}_script_clean"
+    turn_off_action:
+      - script.stop: "${devname}_script_clean"
+      - script.stop: "${devname}_script_empty"
+      - script.stop: "${devname}_script_empty_step"
+      - switch.turn_off: "${devname}_cleaning_solution_pump_relay"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - switch.turn_off: "${devname}_valve_air"
+      - logger.log: "Script canceled! Check the state..."
+      - delay: 1s
+  - platform: template
+    id: "${devname}_script_postclean_control"
+    name: "KegCleaner Script - Post-Clean"
+    lambda: 'return (id(${devname}_script_postclean).is_running());'
+    turn_on_action:
+      - script.execute: "${devname}_script_postclean"
+    turn_off_action:
+      - script.stop: "${devname}_script_postclean"
+      - switch.turn_off: "${devname}_valve_water"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - switch.turn_off: "${devname}_valve_air"
+      - logger.log: "Script canceled! Check the state..."
+      - delay: 1s
+
+
+button:
+  - platform: safe_mode
+    id: "${devname}_safe_mode_boot"
+    name: Safe Mode Boot
+    entity_category: diagnostic
+
+  - platform: restart
+    id: "${devname}_restart_device"
+    name: "Restart Device"
+
+binary_sensor:
+  - platform: gpio
+    name: "KegCleaner Cleaning Solution Heating Check"
+    id: "${devname}_cleaning_solution_heating_check"
+    icon: "mdi:electric-switch"
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 0
+      mode: INPUT
+      inverted: true
+  - platform: gpio
+    name: "KegCleaner Cleaning Solution Pump Check"
+    id: "${devname}_cleaning_solution_pump_check"
+    icon: "mdi:electric-switch"
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 1
+      mode: INPUT
+      inverted: true
+
+sensor:
+  - platform: adc
+    pin: 36
+    name: "KegCleaner KEG Presure"
+    id: "${devname}_keg_presure"
+    update_interval: 1s
+    accuracy_decimals: 2
+#    internal: true
+    unit_of_measurement: bar
+    attenuation: 0db
+    filters:
+      - lambda: if (x < 0.20) { ESP_LOGW("main", "Presure sensor NOT CONNECTED!"); return x; } else { return x; }
+      - calibrate_linear:
+          - 0.62 -> 2.5
+          - 0.55 -> 2.0
+          - 0.46 -> 1.5
+          - 0.38 -> 1.0
+          - 0.33 -> 0.75
+          - 0.3 -> 0.5
+          - 0.27 -> 0.25
+          - 0.25 -> 0.1
+          - 0.235 -> 0.0
+
+  - name: "KegCleaner Cleaning Solution Temperature"
+    platform: dallas
+    address: 0xe700000037ff3e28
+    id: "${devname}_cleaning_solution_temperature"
+    icon: "mdi:coolant-temperature"
+    dallas_id: onewire_hub_1
+    filters:
+      - filter_out: nan
+
+climate:
+  - platform: thermostat
+    name: "KegCleaner Cleaning Solution Heating Control"
+    id: "${devname}_cleaning_solution_heating_control"
+    sensor: "${devname}_cleaning_solution_temperature"
+    min_idle_time: 5s
+    min_heating_off_time: 5s
+    min_heating_run_time: 3s
+    heat_deadband: 1.0
+    heat_overrun: 1.0
+    visual:
+      min_temperature: 20
+      max_temperature: 80
+      temperature_step: 1
+    heat_action:
+      - switch.turn_on: "${devname}_cleaning_solution_heating_relay"
+    idle_action:
+      - switch.turn_off: "${devname}_cleaning_solution_heating_relay"
+
+number:
+  - platform: template
+    name: "KegCleaner Cleaning Duration (sec)"
+    id: "${devname}_cleaning_duration"
+    optimistic: true
+    min_value: 10
+    max_value: 900
+    step: 10
+    initial_value: 300
+    restore_value: true
+    icon: "mdi:timer"
+
+script:
+  # SCRIPT: EMPTY KEG with full stream of compressed air
+  # one of the output valve (return or drain) must be opened
+  # TODO: vychytat overeni, ze sud je prazdny (podle poklesu tlaku), nyni se spoleha na to, ze tlak > 2.4 bar nebo 15 sec staci k vyprazdneni sudu (coz staci, ale nesmi byt hodne plny)
+  - id: "${devname}_script_empty_old"
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return (id(${devname}_valve_drain).state or id(${devname}_valve_return).state);'
+          then:
+            - logger.log: "Emptying script started..."
+            - switch.turn_on: "${devname}_valve_air"
+            - wait_until:
+                condition:
+                  lambda: 'return (id(${devname}_keg_presure).state > 2.4);'
+                timeout: 15s
+            - switch.turn_off: "${devname}_valve_air"
+            - wait_until:
+                condition:
+                  lambda: 'return (id(${devname}_keg_presure).state < 0.1);'
+            - logger.log: "Emptying script done..."
+          else:
+            - logger.log: "DRAIN or RETURN must be opened before starting emptying script..."
+
+  # SCRIPT: Better version of emptying script with support of millis_diff timer
+  - id: "${devname}_script_empty"
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return (id(${devname}_valve_drain).state or id(${devname}_valve_return).state);'
+          then:
+            - logger.log: "Emptying script started..."
+            - globals.set:
+                id: millis_diff
+                value: '9999'
+            - while:
+                condition:
+                  lambda: 'return (id(millis_diff) > 5000);'
+                then:
+                  - script.execute: "${devname}_script_empty_step"
+                  - delay: 1s
+                  - wait_until:
+                      condition:
+                        lambda: 'return not (id(${devname}_script_empty_step).is_running());'
+            - logger.log: "Emptying script done..."
+          else:
+            - logger.log: "DRAIN or RETURN must be opened before starting emptying script..."
+
+  # SCRIPT: One step for emptying KEG, updates millis_diff
+  - id: "${devname}_script_empty_step"
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state < 0.15);'
+          then:
+            - logger.log: "Started emptying step..."
+            - switch.turn_on: "${devname}_valve_air"
+            - delay: 2s
+            - wait_until:
+                condition:
+                  lambda: 'return (id(${devname}_keg_presure).state > 2.4);'
+                timeout: 8s
+            - switch.turn_off: "${devname}_valve_air"
+            - wait_until:
+                condition:
+                  lambda: 'return (id(${devname}_keg_presure).state < 0.35);'
+            - globals.set:
+                id: millis_send
+                value: !lambda 'return millis();'
+            - wait_until:
+                condition:
+                  lambda: 'return (id(${devname}_keg_presure).state < 0.15);'            
+            - globals.set:
+                id: millis_diff
+                value: !lambda 'return millis() - int(id(millis_send));'
+            - lambda: |-
+                ESP_LOGD("main", "From 0.3 bar to 0.1 bar it took: %d", id(millis_diff));
+            - logger.log: "Emptying step done..."
+          else:
+            - logger.log: "ERROR: KEG pressure > 0.15 bar, can't continue with emptying..."
+
+
+
+  # SCRIPT: PRE-CLEAN KEG with HOT Watter
+  - id: "${devname}_script_preclean"
+    mode: single
+    then:
+      - logger.log: "Pre-clean script started..."
+      - switch.turn_off: "${devname}_valve_return"
+      - switch.turn_on: "${devname}_valve_drain"
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state < 0.1);'
+      - switch.turn_on: "${devname}_valve_hot_water"
+      - delay: 3s
+      - switch.turn_on: "${devname}_valve_reduced_air"
+      - delay: 15s
+      - switch.turn_off: "${devname}_valve_hot_water"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - script.execute: "${devname}_script_empty"
+      - wait_until:
+          condition:
+            lambda: 'return not (id(${devname}_script_empty).is_running());'
+      - switch.turn_on: "${devname}_valve_hot_water"
+      - delay: 3s
+      - switch.turn_on: "${devname}_valve_reduced_air"
+      - delay: 5s
+      - switch.turn_off: "${devname}_valve_hot_water"
+      - delay: 5s
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - logger.log: "Pre-clean script done..."
+
+  # SCRIPT: CLEAN KEG with Cleaning Solution + leave keg empty for post clean
+  - id: "${devname}_script_clean"
+    mode: single
+    then:
+      - logger.log: "Clean script started..."
+      - switch.turn_off: "${devname}_valve_return"
+      - switch.turn_off: "${devname}_valve_drain"
+      - switch.turn_on: "${devname}_valve_air"
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state > 1.0);'
+      - switch.turn_off: "${devname}_valve_air"
+      - switch.turn_on: "${devname}_cleaning_solution_pump_relay"
+      - delay: 5s
+      - switch.turn_on: "${devname}_valve_reduced_air"
+      - delay: !lambda "return (id(${devname}_cleaning_duration).state * 1000);"
+      - switch.turn_off: "${devname}_cleaning_solution_pump_relay"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+        # OSETRENI: V pripade, ze v kegu zustal roztok (tlak klesal pomalu), tak probehne empty script
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state < 0.35);'
+      - globals.set:
+          id: millis_send
+          value: !lambda 'return millis();'
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state < 0.15);'            
+      - globals.set:
+          id: millis_diff
+          value: !lambda 'return millis() - int(id(millis_send));'
+      - lambda: |-
+          ESP_LOGD("main", "From 0.3 bar to 0.1 bar it took: %d", id(millis_diff));
+      - if:
+          condition:
+            lambda: 'return (id(millis_diff) > 5000);'
+          then:
+            - script.execute: "${devname}_script_empty"
+            - wait_until:
+                condition:
+                  lambda: 'return not (id(${devname}_script_empty).is_running());'
+        # KONEC OSETRENI
+      - switch.turn_off: "${devname}_valve_return"
+      - logger.log: "Clean script done..."
+
+  # SCRIPT: POST-CLEAN KEG with Water
+  - id: "${devname}_script_postclean"
+    mode: single
+    then:
+      - logger.log: "Post-clean script started..."
+      # prvni dlouhy vyplach s predtlakovanim
+      - switch.turn_off: "${devname}_valve_return"
+      - switch.turn_off: "${devname}_valve_drain"
+      - switch.turn_on: "${devname}_valve_air"
+      - delay: 2s
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state > 1.0);'
+      - switch.turn_off: "${devname}_valve_air"
+      - switch.turn_on: "${devname}_valve_water"
+      - delay: 2s
+      - switch.turn_on: "${devname}_valve_drain"
+      - delay: 3s
+      - switch.turn_on: "${devname}_valve_reduced_air"
+      - delay: 45s
+      - switch.turn_off: "${devname}_valve_water"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - delay: 3s
+      - switch.turn_on: "${devname}_valve_air"
+      - delay: 3s
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state > 2.4);'
+          timeout: 10s
+      - switch.turn_off: "${devname}_valve_air"
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state < 0.15);'
+      # Druhy kratsi vyplach bez predtlakovani
+      - switch.turn_on: "${devname}_valve_water"
+      - delay: 2s
+      - switch.turn_on: "${devname}_valve_reduced_air"
+      - delay: 25s
+      - switch.turn_off: "${devname}_valve_water"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - delay: 3s
+      - switch.turn_on: "${devname}_valve_air"
+      - delay: 3s
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state > 2.4);'
+          timeout: 10s
+      - switch.turn_off: "${devname}_valve_air"
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state < 0.15);'
+      # Treti vyplach bez predtlaku
+      - switch.turn_on: "${devname}_valve_water"
+      - delay: 2s
+      - switch.turn_on: "${devname}_valve_reduced_air"
+      - delay: 10s
+      - switch.turn_off: "${devname}_valve_water"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - delay: 3s
+      - switch.turn_on: "${devname}_valve_air"
+      - delay: 3s
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state > 2.4);'
+          timeout: 10s
+      - switch.turn_off: "${devname}_valve_air"
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state < 0.15);'
+      # Ctvrty vyplach bez predtlaku
+      - switch.turn_on: "${devname}_valve_water"
+      - delay: 2s
+      - switch.turn_on: "${devname}_valve_reduced_air"
+      - delay: 10s
+      - switch.turn_off: "${devname}_valve_water"
+      - switch.turn_off: "${devname}_valve_reduced_air"
+      - delay: 3s
+      - switch.turn_on: "${devname}_valve_air"
+      - delay: 3s
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state > 2.4);'
+          timeout: 10s
+      - switch.turn_off: "${devname}_valve_air"
+      - wait_until:
+          condition:
+            lambda: 'return (id(${devname}_keg_presure).state < 0.15);'
+
+      - logger.log: "Post-clean script done..."
