@@ -292,6 +292,48 @@ switch:
           level: INFO
       - delay: 1s
 
+output:
+  - platform: gpio #ledc
+    id: "${devname}_output_led_heating"
+    pin:
+      pcf8574: pcf8574_hub_out_2
+      number: 2
+      mode: OUTPUT
+      inverted: true
+  - platform: gpio
+    id: "${devname}_output_led_cycle"
+    pin:
+      pcf8574: pcf8574_hub_out_2
+      number: 3
+      mode: OUTPUT
+      inverted: true
+  - platform: gpio
+    id: "${devname}_output_led_error"
+    pin:
+      pcf8574: pcf8574_hub_out_2
+      number: 4
+      mode: OUTPUT
+      inverted: true
+
+light:
+  - platform: binary #monochromatic
+    name: "KegCleaner LED Heating"
+    id: "${devname}_led_heating"
+    icon: "mdi:lightbulb"
+    output: "${devname}_output_led_heating"
+#    effects:
+#      - pulse:
+  - platform: binary
+    name: "KegCleaner LED Cycle"
+    id: "${devname}_led_cycle"
+    icon: "mdi:lightbulb"
+    output: "${devname}_output_led_cycle"
+  - platform: binary
+    name: "KegCleaner LED Error"
+    id: "${devname}_led_error"
+    icon: "mdi:lightbulb-alert"
+    output: "${devname}_output_led_error"
+
 button:
   - platform: safe_mode
     id: "${devname}_safe_mode_boot"
@@ -319,6 +361,63 @@ binary_sensor:
     pin:
       pcf8574: pcf8574_hub_in_1
       number: 1
+      mode: INPUT
+      inverted: true
+  - platform: gpio
+    name: "KegCleaner Button Heating On"
+    id: "${devname}_button_heating_on"
+    icon: "mdi:radiator"
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 2
+      mode: INPUT
+      inverted: true
+    on_click:
+      then:
+        - climate.control:
+            id: "${devname}_cleaning_solution_heating_control"
+            mode: HEAT
+  - platform: gpio
+    name: "KegCleaner Button Heating Off"
+    id: "${devname}_button_heating_off"
+    icon: "mdi:radiator-off"
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 3
+      mode: INPUT
+      inverted: true
+    on_click:
+      then:
+        - climate.control:
+            id: "${devname}_cleaning_solution_heating_control"
+            mode: "OFF"
+  - platform: gpio
+    name: "KegCleaner Button Cycle"
+    id: "${devname}_button_cycle"
+    icon: "mdi:power-cycle"
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 4
+      mode: INPUT
+      inverted: true
+    on_click:
+    - min_length: 50ms
+      max_length: 500ms
+      then:
+        - logger.log: "Clean cycle STARTED by Button"
+        - switch.turn_on: "${devname}_script_start_control"
+    - min_length: 1000ms
+      max_length: 4000ms
+      then:
+        - logger.log: "Clean cycle STOPPED by Button"
+        - switch.turn_off: "${devname}_script_start_control"
+  - platform: gpio
+    name: "KegCleaner Button Emergency Stop"
+    id: "${devname}_button_emergency_stop"
+    icon: "mdi:car-brake-alert"
+    pin:
+      pcf8574: pcf8574_hub_in_1
+      number: 5
       mode: INPUT
       inverted: true
 
@@ -492,7 +591,7 @@ script:
             - wait_until:
                 condition:
                   lambda: 'return (id(${devname}_keg_presure).state > 2.4);'
-                timeout: 8s
+                timeout: 6s
             - switch.turn_off: "${devname}_valve_air"
             - wait_until:
                 condition:
@@ -522,7 +621,7 @@ script:
 
 
 
-  # SCRIPT: PRE-CLEAN KEG with HOT Watter
+  # SCRIPT: PRE-CLEAN KEG with HOT Water
   - id: "${devname}_script_preclean"
     mode: single
     then:
